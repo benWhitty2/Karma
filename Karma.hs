@@ -33,7 +33,7 @@ instance Show Rank where
   show RK  = "King"
   show RA  = "Ace"
 
-instance Ord Rank where--8 and 10 will should never be passed in as a top card so 2 can still always be played
+instance Ord Rank where--8 and 10 should never be passed in as a top card so 2 can always be played
   compare R10 R10 = EQ
   compare R10 _  = GT
   compare _ R10  = LT
@@ -85,15 +85,6 @@ data GameState = GameState
 data Extension = ExtReverse8 | ExtThree3s | ExtNineClubs
   deriving (Eq, Show)
 
-
-
---deck = shuffleDeck myGen [Card rank suit | rank<-[(minBound :: Rank)..],suit<-[(minBound :: Suit)..]]
-deck = shuffleDeck myGen [Card rank Diamonds | rank<-[(minBound :: Rank)..]]
---creates a random generator
-myGen = mkStdGen 5
---creates a blank player
-player1 = Player 1 "testPlayer1" [] [] []
-
 --------------------------------------------------------------------------------
 -- Step 1 
 --------------------------------------------------------------------------------
@@ -125,7 +116,8 @@ dealCards num = do
 giveWastePileTo :: Player -> State GameState ()
 giveWastePileTo player = do
   gs <- get
-  let newps = replacePlayer gs (player{hand = hand player ++ discardPile gs})--give discard pile to player
+  --give discard pile to player
+  let newps = replacePlayer gs (player{hand = hand player ++ discardPile gs})
   put gs{players = newps, discardPile = []}--clears discard pile
   return ()
 
@@ -135,7 +127,8 @@ replenishCards player = do
   if length (hand player) < 3 then do--check if player has less than 3 cards
     gs <- get
     let num = 3 - length (hand player)--number of cards to replenish
-        newps = replacePlayer gs player{hand = hand player ++ evalState (dealCards num) gs}--list contianing replenished player
+        --list containing replenished player
+        newps = replacePlayer gs player{hand = hand player ++ evalState (dealCards num) gs}
     put (execState (dealCards num) gs){players = newps}--removes cards from draw pile
     return ()
   else do
@@ -143,14 +136,18 @@ replenishCards player = do
 
 
 shuffleDeck :: StdGen -> Deck -> Deck--sorts deck based on random indexes
-shuffleDeck gen deck= [card | (card, _) <- sortBy (compare `on` snd) (zip deck randomNumbers) :: [(Card, Int)]]
-  where randomNumbers = randoms gen--generates random indexes
+shuffleDeck gen deck= [card | (card, _) <- shuffledDeck :: [(Card, Int)]]
+  where 
+    randomNumbers = randoms gen--generates random indexes
+    shuffledDeck = sortBy (compare `on` snd) (zip deck randomNumbers)
 
 
 
-replacePlayer :: GameState -> Player -> [Player]--replace player with matching id in the gamestate
+
+replacePlayer :: GameState -> Player -> [Player]--replace player with matching id in the GameState
 replacePlayer gs player = [if pId p == pId player then player else p| p <- ps]
   where ps = players gs
+
 
 
 --------------------------------------------------------------------------------
@@ -163,23 +160,27 @@ basicStrategy = do
   gs <- get
   let player = players gs !! currentIx gs
       topCard = maybeTopCard (discardPile gs)
-  if (not.null) (hand player) then do--if there are cards in hand
+  --if there are cards in hand
+  if (not.null) (hand player) then do
     let card = sMinimum (validPlays topCard (hand player))
     put gs{players = replacePlayer gs (player{hand = sRemove (hand player) card})}
     return card
-  else if null (drawPile gs) && (not.null) (faceUp player) then do--no card in hand but cards in faceUp
+  --no card in hand but cards in faceUp
+  else if null (drawPile gs) && (not.null) (faceUp player) then do
     let card = playFaceUp player topCard
     put gs{players = replacePlayer gs (player{faceUp = sRemove (faceUp player) card})}
     return card
-  else if null (drawPile gs) && null (faceUp player) then do--no cards in hand or faceUp but faceDown
+  --no cards in hand or faceUp but faceDown
+  else if null (drawPile gs) && null (faceUp player) then do
     let card = [head (faceDown player)]
     put gs{players = replacePlayer gs (player{faceDown = tail (faceDown player)})}
     return card
-  else do--this is only here for safety if it runs player should have already been out
+  --this is only here for safety if it runs player should have already been out
+  else do
     put gs
     return []
   where
-    --when playing faceUp cards a card must be played regardless of legalify if there are no legal cards
+    --when playing faceUp cards a card must be played regardless of legally
     playFaceUp player topCard = if null (sMinimum (validPlays topCard (faceUp player))) 
       then sMinimum (faceUp player) 
       else sMinimum (validPlays topCard (faceUp player))
@@ -199,22 +200,23 @@ applyStrategy = do
   let card = evalState callStrategy gs
       newGS =  execState callStrategy gs
       player = players newGS !! currentIx newGS
-  if null card || null (validPlays (maybeTopCard (discardPile gs)) card) then do--no legal move condition
-    put (execState (giveWastePileTo player) newGS){currentIx = newCI newGS}--picks up pile
+  --no legal move condition
+  if null card || null (validPlays (maybeTopCard (discardPile gs)) card) then do
+    put (execState (giveWastePileTo player) newGS){currentIx = incCI newGS}--picks up pile
     return ""
-  else if rank (head card) == R10 || fourInRow (head card) (discardPile newGS) (length card) then do--burn condition
+  --burn condition
+  else if rank (head card) == R10 || fourInRow (head card) (discardPile newGS) (length card) then do
     let newBurnedPiles = (head card : discardPile newGS): burnedPiles newGS
         finalGS = execState (replenishCards player) newGS
-    put finalGS{burnedPiles = newBurnedPiles,currentIx = newCI finalGS,discardPile=[]}
+    put finalGS{burnedPiles = newBurnedPiles,currentIx = incCI finalGS,discardPile=[]}
     return "Stack Burned\n"
-  else  do  -- regular pace down
+  -- regular pace down
+  else  do
     let newDiscardPile = card ++ discardPile newGS
         finalGS = execState (replenishCards player) newGS
-    put finalGS{discardPile = newDiscardPile,currentIx = newCI finalGS}
+    put finalGS{discardPile = newDiscardPile,currentIx = incCI finalGS}
     return ""
     where
-      newCI gs = (currentIx gs + 1) `mod` length (players gs)--increments index
-
       fourInRow _ _ 4 = True--checks if 4 cards of same value are in a row
       fourInRow _ [] _ = False
       fourInRow t (x:xs) count
@@ -222,7 +224,8 @@ applyStrategy = do
         | rank x == R8 = fourInRow t xs count
         | otherwise = False
 
-
+incCI :: GameState -> Int
+incCI gs = (currentIx gs +1) `mod` length (players gs)
 
 gameLoop :: Int -> State GameState [Int]
 gameLoop n = do
@@ -230,20 +233,24 @@ gameLoop n = do
   if length (players gs) -1 <= length (finishedOrder gs) || n == 1000 then do--base case
     put gs
     return (finishedOrder gs)
-  else if pId (player gs) `elem` finishedOrder gs then do--skip finished players
-    put (execState (gameLoop (n+1)) gs{currentIx = (currentIx gs +1) `mod` length (players gs)})
-    return (evalState (gameLoop (n+1)) gs{currentIx = (currentIx gs +1) `mod` length (players gs)})
+  --skip finished players
+  else if pId (player gs) `elem` finishedOrder gs then do
+    put (execState (gameLoop (n+1)) gs{currentIx = incCI gs})
+    return (evalState (gameLoop (n+1)) gs{currentIx = incCI gs})
   else do
-    let newGs = execState applyStrategy gs--exscutes player turn
-    if null (hand (lastPlayer newGs)) && null (faceUp (lastPlayer newGs)) && null (faceDown (lastPlayer newGs)) then do--if player is out
+    let newGs = execState applyStrategy gs--executes player turn
+    --if player is out
+    if playerOut (lastPlayer newGs) then do
       let newFinishedOrder = finishedOrder newGs ++ [pId (lastPlayer newGs)]
       put (execState (gameLoop (n+1)) newGs{finishedOrder = newFinishedOrder}) 
       return (evalState (gameLoop (n+1)) newGs{finishedOrder = newFinishedOrder})
-    else do--if player still in
+    --if player still in
+    else do
       put (execState (gameLoop (n+1)) newGs)
       return (evalState (gameLoop (n+1)) newGs)
 
   where
+    playerOut player = null (hand player) && null (faceUp player) && null (faceDown player)
     lastPlayer gs = players gs !! ((currentIx gs -1) `mod` length (players gs))
     player gs = players gs !! (currentIx gs `mod` length (players gs))
 
@@ -251,7 +258,8 @@ chooseStartingPlayer :: State GameState ()
 chooseStartingPlayer = do
   gs <- get
   let ps = players gs--gets list of players
-      cards = foldl (\hs p -> [sort [rank card| card<- hand p]] : hs) [] ps--colects and sorts all hands accoring to there ranks
+      --collects and sorts all hands according to there ranks
+      cards = foldl (\hs p -> [sort [rank card| card<- hand p]] : hs) [] ps
       mini = minimum cards--gets the worst hand
       startingIndex = unwrap (elemIndex mini cards)--finds the index the worst hand is located at
   put gs{currentIx = startingIndex}
@@ -272,27 +280,31 @@ basicStrategySets = do
     let cards = sMinimum (validPlays topCard (hand player))
     put gs{players = replacePlayer gs (player{hand = sRemove (hand player) cards})}
     return cards
-  else if null (drawPile gs) && (not.null) (faceUp player) then do--no card in hand but cards in faceUp
+  --no card in hand but cards in faceUp
+  else if null (drawPile gs) && (not.null) (faceUp player) then do
     let cards = playFaceUp player topCard
     put gs{players = replacePlayer gs (player{faceUp = sRemove (faceUp player) cards})}
     return cards
-  else if null (drawPile gs) && null (faceUp player) && not (null (faceDown player)) then do--no cards in hand or faceUp but faceDown
+  --no cards in hand or faceUp but faceDown
+  else if null (drawPile gs) && null (faceUp player) && not (null (faceDown player)) then do
     let card = playFaceUp player topCard
     put gs{players = replacePlayer gs (player{faceDown = tail (faceDown player)})}
     return card
-  else do--this is only here for safety if it runs player should have already been out
+  --this is only here for safety if it runs player should have already been out
+  else do
     put gs
     return []
   where
-    --when playing faceUp cards a card must be played regardless of legalify if there are no legal cards
+    --when playing faceUp cards a card must be played regardless of legally
     playFaceUp player topCard = if null (sMinimum (validPlays topCard (faceUp player))) 
       then sMinimum (faceUp player)
       else sMinimum (validPlays topCard (faceUp player))
     
-    sMinimum [] = []--a safe minimum that returns restult in a list
+    sMinimum [] = []--a safe minimum that returns result in a list
     sMinimum cards =  takeSet (sortBy (compare `on` rank) cards)
 
-    takeSet (x:xs) = x : takeWhile (\ y -> rank y == rank x) xs--keeps taking cards from front of list untill rank changes
+    --keeps taking cards from front of list until rank changes
+    takeSet (x:xs) = x : takeWhile (\ y -> rank y == rank x) xs
 
     sRemove xs [] = xs--a safe remove for both list and target
     sRemove xs ts = [x | x<-xs, rank x /= rank (head ts)]
@@ -306,30 +318,47 @@ gameLoopWithHistory n = do
   if length (players gs) -1 <= length (finishedOrder gs) || n == 1000 then do--base case
     put gs
     return (show (finishedOrder gs))
-  else if pId (player gs) `elem` finishedOrder gs then do--skip finished players
-    put (execState (gameLoopWithHistory (n+1)) gs{currentIx = (currentIx gs +1) `mod` length (players gs)})
-    return (evalState (gameLoopWithHistory (n+1)) gs{currentIx = (currentIx gs +1) `mod` length (players gs)})
+  --skip finished players
+  else if pId (player gs) `elem` finishedOrder gs then do
+    put (execState (gameLoopWithHistory (n+1)) gs{currentIx = incCI gs})
+    return (evalState (gameLoopWithHistory (n+1)) gs{currentIx = incCI gs})
   else do
-    let playerState = showPlayerState (player gs)--exscutes  player turn
+    let playerState = showPlayerState (player gs)--executes player turn
         newGs = execState applyStrategy gs
-    if null (hand (lastPlayer newGs)) && null (faceUp (lastPlayer newGs)) && null (faceDown (lastPlayer newGs)) then do--if player is out
+    --if player is out
+    if playerOut(lastPlayer newGs) then do
       let newFinishedOrder = finishedOrder newGs ++ [pId (lastPlayer newGs)]
       put (execState (gameLoopWithHistory (n+1)) newGs{finishedOrder = newFinishedOrder})
-      let output = playerState ++ "\n" ++ (show (discardPile newGs)) ++ "\n" ++ evalState applyStrategy gs
+      let playerOutput = playerState ++ "\n"
+          gameOutput = (show (discardPile newGs)) ++ "\n" ++ evalState applyStrategy gs
           playerOut = pName (lastPlayer newGs) ++ " is Out \n"
-      return (output ++ playerOut ++ evalState (gameLoopWithHistory (n+1)) newGs{finishedOrder = newFinishedOrder}) 
-    else do--if player still in
+          recurse = evalState (gameLoopWithHistory (n+1)) newGs{finishedOrder = newFinishedOrder}
+
+      return (playerOutput ++ gameOutput ++ playerOut ++ "\n" ++ recurse) 
+    --if player still in
+    else do
       put (execState (gameLoopWithHistory (n+1)) newGs)
-      let output = playerState ++ "\n" ++ (show (discardPile newGs) ++ "\n") ++ evalState applyStrategy gs
-      return (output ++ evalState (gameLoopWithHistory (n+1)) newGs)
+      let output = playerState ++ "\n" ++ (show (discardPile newGs) ++ "\n")
+          recurse = evalState applyStrategy gs ++ evalState (gameLoopWithHistory (n+1)) newGs 
+      return (output ++ "\n" ++ recurse)
   where
+    playerOut player = null (hand player) && null (faceUp player) && null (faceDown player)
     lastPlayer s = players s !! abs((currentIx s -1) `mod` length (players s))
     player s = players s !! (currentIx s `mod` length (players s))
 
 showPlayerState :: Player -> String--a helper function for displaying how the game is going
-showPlayerState player = "Player " ++ pName player ++ " FaceDown: " ++ show (length (faceDown player)) ++ "\n  Hand: " ++ show (hand player) ++ "\n  FaceUp: " ++ show (faceUp player) 
+showPlayerState p = "Player " ++ pName p ++ showFaceDown p ++ showHand p  ++ showFaceUp p
 
-callStrategy :: State GameState Deck--executes and evalues strategy corisponding with player Id
+showFaceDown :: Player -> String
+showFaceDown player = " FaceDown: " ++ show (length (faceDown player))
+
+showFaceUp :: Player -> String
+showFaceUp player = "\n" ++ "FaceUp: " ++ show (faceUp player) 
+
+showHand :: Player -> String--a helper function for displaying the players hand
+showHand player = "\n" ++ "Hand: " ++ show (hand player)
+
+callStrategy :: State GameState Deck--executes and evaluates strategy corresponding with player Id
 callStrategy = do
   gs <- get
   let player = players gs !! currentIx gs
@@ -339,14 +368,17 @@ callStrategy = do
 
 playOneGameWithHistory :: IO ()
 playOneGameWithHistory = do
-  let myGen = mkStdGen 1--creates players and gen
-      deck = shuffleDeck myGen [Card rank suit | rank<-[(minBound :: Rank)..],suit<-[(minBound :: Suit)..]]
-      player1 = makePlayer 1 "testPlayer1" deck basicStrategy
-      player2 = makePlayer 2 "testPlayer2" (drop 9 deck) basicStrategySets
-      player3 = makePlayer 3 "testPlayer3" (drop 18 deck) smartStrategy
+  let myGen = mkStdGen 5--creates players and gen
+      deck = [Card rank suit | rank<-[(minBound :: Rank)..],suit<-[(minBound :: Suit)..]]
+      shuffledDeck = shuffleDeck myGen deck
+      
+      player1 = makePlayer 1 "testPlayer1" shuffledDeck basicStrategy
+      player2 = makePlayer 2 "testPlayer2" (drop 9 shuffledDeck) basicStrategySets
+      player3 = makePlayer 3 "testPlayer3" (drop 18 shuffledDeck) smartStrategy
   
-  let gs = execState chooseStartingPlayer $ GameState [player1,player2,player3] 0 (drop 27 deck) [] [] myGen []--creats new game state
-  putStr (evalState (gameLoopWithHistory 0) gs)
+  --creates new game state
+  let gs = GameState [player1,player2,player3] 0 (drop 27 shuffledDeck) [] [] myGen []
+  putStr (evalState (gameLoopWithHistory 0) $ execState chooseStartingPlayer gs)
 
 --------------------------------------------------------------------------------
 -- Step 4 
@@ -360,33 +392,43 @@ newCI gs exts inc
 gameLoopWithHistory4 :: Int -> [Extension] -> Bool -> State GameState String
 gameLoopWithHistory4 n exts inc = do
   gs <- get
-  if length (players gs) -1 <= length (finishedOrder gs) || n == 1000 then do--base case
+  --base case
+  if length (players gs) -1 <= length (finishedOrder gs) || n == 1000 then do
     put gs
     return (show (finishedOrder gs))
-  else if pId (player gs) `elem` finishedOrder gs then do--skip finished players
+  --skip finished players
+  else if pId (player gs) `elem` finishedOrder gs then do
     put (execState (gameLoopWithHistory4 (n+1) exts inc) gs{currentIx = newCI gs exts inc })
     return (evalState (gameLoopWithHistory4 (n+1) exts inc) gs{currentIx = newCI gs exts inc })
   else do
     let playerState = showPlayerState (player gs)
         newGs = execState (applyStrategy4 exts inc) gs
         newInc = evalState (applyStrategy4 exts inc) gs
-    if null (hand (lastPlayer newGs inc)) && null (faceUp (lastPlayer newGs inc)) && null (faceDown (lastPlayer newGs inc)) then do--if player is out
-      let newFinishedOrder = finishedOrder newGs ++ [pId (lastPlayer newGs inc)]
-      put (execState (gameLoopWithHistory4 (n+1) exts newInc) newGs{finishedOrder = newFinishedOrder})
-      let output =  playerState ++ "\n" ++ (show (discardPile newGs) ++ "\n")  ++ hasburned gs newGs inc ++ "\n"
+    --if player is out
+    if playerOut(lastPlayer newGs inc) then do
+      let newFO = finishedOrder newGs ++ [pId (lastPlayer newGs inc)]
+      put (execState (gameLoopWithHistory4 (n+1) exts newInc) newGs{finishedOrder = newFO})
+      let playerOutput =  playerState ++ "\n"
+          gameOutput = (show (discardPile newGs) ++ "\n")  ++ hasburned gs newGs inc ++ "\n"
           playerOut = pName (lastPlayer newGs inc) ++ " is Out \n"
-      return (output ++ playerOut ++ evalState (gameLoopWithHistory4 (n+1) exts newInc) newGs{finishedOrder = newFinishedOrder})
-    else do--if player still in
+          recurse = evalState (gameLoopWithHistory4 (n+1) exts newInc) newGs{finishedOrder = newFO}
+      return (playerOutput ++ gameOutput ++ playerOut ++ "\n" ++ recurse)
+    --if player still in
+    else do
       put (execState (gameLoopWithHistory4 (n+1) exts newInc) newGs)
-      let output =  playerState ++ "\n" ++ (show (discardPile newGs) ++ "\n") ++ hasburned gs newGs inc
-      return (output ++ evalState (gameLoopWithHistory4 (n+1) exts newInc) newGs)
+      let playerOutput = playerState ++ "\n"
+          gameOutput = (show (discardPile newGs) ++ "\n") ++ hasburned gs newGs inc
+          recurse = evalState (gameLoopWithHistory4 (n+1) exts newInc) newGs
+      return (playerOutput ++ gameOutput ++ "\n" ++ recurse)
   where
+    playerOut player = null (hand player) && null (faceUp player) && null (faceDown player)
     lastPlayer s inc | inc = players s !! ((currentIx s - 1) `mod` length (players s))
       | otherwise = players s !! ((currentIx s + 1) `mod` length (players s))
     player s = players s !! (currentIx s `mod` length (players s))
 
-    --checks if stack has bunded and retuns appropriate string
-    hasburned gs newGs inc= if null (discardPile newGs) && length (hand (player gs)) > length (hand (lastPlayer newGs inc))
+    --checks if stack has burned and returns appropriate string
+    hasburned gs newGs inc =
+      if null (discardPile newGs) && length(hand (player gs)) >= length(hand (lastPlayer newGs inc))
       then "Stack Burned\n" 
       else ""
 
@@ -399,33 +441,40 @@ applyStrategy4 exts inc = do
   let cards = evalState callStrategy gs
       newGS =  execState callStrategy gs
       player = players newGS !! currentIx newGS
-  if null cards || null (validPlays (maybeTopCard (discardPile gs)) cards) then do--no legal move condition
-    
+  --no legal move condition
+  if null cards || null (validPlays (maybeTopCard (discardPile gs)) cards) then do
     put (execState (giveWastePileTo player) newGS){currentIx = newCI newGS exts inc}--picks up pile
     return inc
-  else if rank (head cards) == R10 || fourInRow (head cards) (discardPile newGS) (length cards) then do--burn condition
+  --burn condition
+  else if rank (head cards) == R10 || fourInRow (head cards) (discardPile newGS) (length cards) then do
     let newBurnedPiles = (head cards : discardPile newGS): burnedPiles newGS
         finalGS = execState (replenishCards player) newGS
     put finalGS{burnedPiles = newBurnedPiles,currentIx = newCI finalGS exts inc,discardPile=[]}
     return (newInc inc exts cards)
-  else  do  -- regular pace down
+  --regular pace down
+  else  do
     let newDiscardPile = cards ++ discardPile newGS
         finalGS = execState (replenishCards player) newGS
         newI = newInc inc exts cards
-
-    if extention3 exts cards then  do-- if three 3s played if extention is on
-      let newps = replacePlayer finalGS ((nextPlayer finalGS newI){hand = hand (nextPlayer finalGS newI) ++ newDiscardPile})
+    --if three 3s played if extension is on
+    if extention3 exts cards then  do
+      let newp = (nextPlayer finalGS newI){hand = hand (nextPlayer finalGS newI) ++ newDiscardPile}
+          newps = replacePlayer finalGS newp
       put finalGS{discardPile = [],currentIx = newCI finalGS exts newI, players = newps}
       return newI
-    else if extention9 exts cards then do -- if 9 of clubs played if extention is on
+    --if 9 of clubs played if extension is on
+    else if extention9 exts cards then do 
       let cardToSwap = sHead (hand (nextPlayer finalGS newI))
-          newps = replacePlayer finalGS ((nextPlayer finalGS newI){hand = sTail (hand (nextPlayer finalGS newI))})
+          newp = (nextPlayer finalGS newI){hand = sTail (hand (nextPlayer finalGS newI))}
+          newps = replacePlayer finalGS newp
           finalps = replacePlayer finalGS{players = newps} (player{hand = hand player ++ cardToSwap})
-      put finalGS{discardPile = newDiscardPile,currentIx = newCI finalGS exts newI, players = finalps}
+          index = newCI finalGS exts newI
+      put finalGS{discardPile = newDiscardPile,currentIx = index, players = finalps}
       return newI
-      else do-- normal play
-        put finalGS{discardPile = newDiscardPile,currentIx = newCI finalGS exts newI}
-        return newI
+    --normal play
+    else do
+      put finalGS{discardPile = newDiscardPile,currentIx = newCI finalGS exts newI}
+      return newI
     where
       sHead [] = []
       sHead (x:_) = [x]
@@ -434,7 +483,7 @@ applyStrategy4 exts inc = do
       sTail (_:xs) = xs
       
       --checks for extension conditions
-      extention3 exts cards = ExtThree3s `elem` exts  && length cards == 3 && rank (head cards) == R3
+      extention3 exts cards = ExtThree3s `elem` exts && length cards == 3 && rank (head cards) == R3
       extention9 exts cards = ExtNineClubs `elem` exts && Card R9 Clubs `elem` cards
 
       newInc inc exts cards--if odd number of 8 played reverse direction
@@ -463,11 +512,13 @@ smartStrategy = do
     let cards = sMinimum (validPlays topCard (hand player))
     put gs{players = replacePlayer gs (player{hand = sRemove (hand player) cards})}
     return cards
-  else if null (drawPile gs) && (not.null) (faceUp player) then do--no card in hand but cards in faceUp
+  --no card in hand but cards in faceUp
+  else if null (drawPile gs) && (not.null) (faceUp player) then do
     let cards = playFaceUp player topCard
     put gs{players = replacePlayer gs (player{faceUp = sRemove (faceUp player) cards})}
     return cards
-  else if null (drawPile gs) && null (faceUp player) && not (null (faceDown player)) then do--no cards in hand or faceUp but faceDown
+  --no cards in hand or faceUp but faceDown
+  else if null (drawPile gs) && null (faceUp player) && not (null (faceDown player)) then do
     let card = [head (faceDown player)]
     put gs{players = replacePlayer gs (player{faceDown = tail (faceDown player)})}
     return card
@@ -475,7 +526,7 @@ smartStrategy = do
     put gs
     return []
   where
-    --when playing faceUp cards a card must be played regardless of legalify if there are no legal cards
+    --when playing faceUp cards a card must be played regardless of legality
     playFaceUp player topCard = if null (sMinimum (validPlays topCard (faceUp player))) 
       then 
         sMinimum (faceUp player)--if no legal move
@@ -489,63 +540,83 @@ smartStrategy = do
       else
         takeSet (sortBy (compare `on` rank) cards)--get rid of low rank cards quickly
     
-    takeSet (x:xs) = x : takeWhile (\ y -> rank y == rank x) xs--keeps taking cards from front of list untill rank changes
+    --keeps taking cards from front of list until rank changes
+    takeSet (x:xs) = x : takeWhile (\ y -> rank y == rank x) xs
 
     sRemove xs ts = [x | x<-xs, x `notElem` ts]--removes a list of items from a list
 
 playTournament :: Int -> IO [(String, Int)]
 playTournament n = do 
   let results = (runGames n)
-      counts = [length (filter (==1) results),length(filter (==2) results),length(filter (==3) results)]--counts how many times each player won
+      --counts how many times each player won
+      p1Count = length (filter (==1) results)
+      p2Count = length (filter (==2) results)
+      p3Count = length (filter (==3) results) 
+      counts = [p1Count,p2Count,p3Count]
       list = (zip (map pName $ newPlayers 0) counts)--pairs counts with player names
   print list
   return list
 
     where
       runGames :: Int -> [Int]
-      runGames 0  = []--runs n indepdent games and returns a list of the winers of length n
+      runGames 0  = []--runs n independent games and returns a list of the winners of length n
       runGames n = (take 1(evalState (gameLoop 0) $ newState n)) ++ (runGames (n-1))
 
-      newState n = execState chooseStartingPlayer (GameState (newPlayers n) 0 (drop 27 $ newDeck n) [] [] (mkStdGen n) [])--creates a new game state
-      
+      --creates a new game state
+      tempState n = GameState (newPlayers n) 0 (drop 27 $ newDeck n) [] [] (mkStdGen n) []
+      newState n = execState chooseStartingPlayer $ tempState n
+      basicPlayer n = makePlayer 1 "BasicPlayer" (newDeck n) basicStrategy
+      setPlayer n = makePlayer 2 "SetPlayer" (drop 9 (newDeck n)) basicStrategySets
+      smartPlayer n = makePlayer 3 "SmartPlayer" (drop 18 (newDeck n)) smartStrategy
 
-      newPlayers n= [makePlayer 1 "BasicPlayer" (newDeck n) basicStrategy,makePlayer 2 "SetPlayer" (drop 9 (newDeck n)) basicStrategySets,makePlayer 3 "SmartPlayer" (drop 18 (newDeck n)) smartStrategy]
-      newDeck n = shuffleDeck (mkStdGen n) [Card rank suit | rank<-[(minBound :: Rank)..],suit<-[(minBound :: Suit)..]]
+
+      newPlayers n= [basicPlayer n,setPlayer n,smartPlayer n]
+      tempDeck = [Card rank suit | rank<-[(minBound :: Rank)..],suit<-[(minBound :: Suit)..]]
+      newDeck n = shuffleDeck (mkStdGen n) tempDeck
 
 
-
-makePlayer :: PlayerId -> PlayerName -> Deck -> (State GameState Deck) -> Player--a helper function for seting up new games
-makePlayer id name deck strategy = Player id name (take 3 deck) (take 3 $ drop 3 deck) (take 3 $ drop 6 deck) strategy
+--a helper function for setting up new games
+makePlayer :: PlayerId -> PlayerName -> Deck -> (State GameState Deck) -> Player
+makePlayer id name deck strategy = Player id name hand faceUp faceDown strategy
+  where
+    hand = take 3 deck
+    faceUp = take 3 $ drop 3 deck
+    faceDown = take 3 $ drop 6 deck
 
 playOneGame :: IO ()
 playOneGame = do
   let myGen = mkStdGen 513--creates players and gen
-      deck = shuffleDeck myGen [Card rank suit | rank<-[(minBound :: Rank)..],suit<-[(minBound :: Suit)..]]
-      player1 = makePlayer 1 "testPlayer1" deck basicStrategy
-      player2 = makePlayer 2 "testPlayer2" (drop 9 deck) basicStrategySets
-      player3 = makePlayer 3 "testPlayer3" (drop 18 deck) smartStrategy
+      deck = [Card rank suit | rank<-[(minBound :: Rank)..],suit<-[(minBound :: Suit)..]]
+      shuffledDeck = shuffleDeck myGen deck
+      player1 = makePlayer 1 "testPlayer1" shuffledDeck basicStrategy
+      player2 = makePlayer 2 "testPlayer2" (drop 9 shuffledDeck) basicStrategySets
+      player3 = makePlayer 3 "testPlayer3" (drop 18 shuffledDeck) smartStrategy
   
-  let gs = execState chooseStartingPlayer $ GameState [player1,player2,player3] 0 (drop 27 deck) [] [] myGen []--creats new game state
-  putStr (show $ evalState (gameLoop 0) gs)
+
+  --creates new game state
+  let gs =  GameState [player1,player2,player3] 0 (drop 27 shuffledDeck) [] [] myGen []
+  putStr (show $ evalState (gameLoop 0) $ execState chooseStartingPlayer gs)
 
 
 playOneGameStep4 :: [Extension] -> IO ()
 playOneGameStep4 exts = do
   let myGen = mkStdGen 1--creates players and gen
-      deck = shuffleDeck myGen [Card rank suit | rank<-[(minBound :: Rank)..],suit<-[(minBound :: Suit)..]]
-      player1 = makePlayer 1 "testPlayer1" deck basicStrategy
-      player2 = makePlayer 2 "testPlayer2" (drop 9 deck) basicStrategySets
-      player3 = makePlayer 3 "testPlayer3" (drop 18 deck) smartStrategy
+      deck = [Card rank suit | rank<-[(minBound :: Rank)..],suit<-[(minBound :: Suit)..]]
+      shuffledDeck = shuffleDeck myGen deck
+      player1 = makePlayer 1 "testPlayer1" shuffledDeck basicStrategy
+      player2 = makePlayer 2 "testPlayer2" (drop 9 shuffledDeck) basicStrategySets
+      player3 = makePlayer 3 "testPlayer3" (drop 18 shuffledDeck) smartStrategy
   
-  let gs =  execState chooseStartingPlayer $ GameState [player1,player2,player3] 0 (drop 27 deck) [] [] myGen []--creats new game state
-  putStr (evalState (gameLoopWithHistory4 0 exts True) gs)
+  --creates new game state
+  let gs = GameState [player1,player2,player3] 0 (drop 27 shuffledDeck) [] [] myGen []
+  putStr (evalState (gameLoopWithHistory4 0 exts True) $ execState chooseStartingPlayer gs)
 
 
 main :: IO ()
 main = do
 
-  playTournament 100
+  --playTournament 100
   --playOneGameStep4 [ExtReverse8]
   --playOneGame
-  --playOneGameWithHistory
+  playOneGameWithHistory
   putStr ("\n==========")
