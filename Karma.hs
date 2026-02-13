@@ -83,13 +83,11 @@ data GameState = GameState
   }
 
 
--- Different extension rules we can toggle
+-- Different extension rules
 data Extension = ExtReverse8 | ExtThree3s | ExtNineClubs
   deriving (Eq, Show)
 
---------------------------------------------------------------------------------
--- Step 1 
---------------------------------------------------------------------------------
+
 legalPlay :: Maybe Card -> Card -> Bool
 legalPlay Nothing _ = True
 legalPlay (Just topCard) c
@@ -150,11 +148,6 @@ replacePlayer :: GameState -> Player -> [Player]--replace player with matching i
 replacePlayer gs player = [if pId p == pId player then player else p| p <- ps]
   where ps = players gs
 
-
-
---------------------------------------------------------------------------------
--- Step 2 
---------------------------------------------------------------------------------
 
 
 basicStrategy :: State GameState Deck
@@ -266,9 +259,6 @@ chooseStartingPlayer = do
     unwrap (Just x) = x
     unwrap Nothing = 0
   
---------------------------------------------------------------------------------
--- Step 3 
---------------------------------------------------------------------------------
 basicStrategySets:: State GameState Deck
 basicStrategySets = do
   gs <- get
@@ -407,9 +397,7 @@ playOneGameWithHistory = do
   let gs = GameState [player1,player2,player3] 0 (drop 27 shuffledDeck) [] [] myGen [] 0 True
   putStr (evalState (gameLoopWithHistory) $ execState chooseStartingPlayer gs)
 
---------------------------------------------------------------------------------
--- Step 4 
---------------------------------------------------------------------------------
+
 newCI :: GameState -> [Extension] -> Int--increments index for step 4 games
 newCI gs exts
   | inc gs = (currentIx gs + 1) `mod` length (players gs)
@@ -463,10 +451,6 @@ hasBurned gs newGs inc =
   if null (discardPile newGs) && length(hand (player gs)) >= length(hand (lastPlayer newGs))
   then "Stack Burned\n" 
   else ""
-
---lastPlayer4 :: GameState -> Bool -> Player
---lastPlayer4 gs i | inc gs = players gs !! ((currentIx gs - 1) `mod` length (players gs))
- --                  | otherwise = players gs !! ((currentIx gs + 1) `mod` length (players gs))
 
 applyStrategy4 :: [Extension] -> State GameState String
 applyStrategy4 exts = do
@@ -568,9 +552,7 @@ applyExtention3 = do
   put gs{discardPile = [], players = newps}
   return ()
    
---------------------------------------------------------------------------------
--- Step 5 — Smart Player and Tournaments
---------------------------------------------------------------------------------
+
 smartStrategy :: State GameState Deck
 smartStrategy = do
   gs <- get
@@ -683,8 +665,8 @@ playOneGameStep4 exts = do
 main :: IO ()
 main = do
 
-  --playTournament 100
-  playOneGameStep4 [ExtReverse8,ExtThree3s,ExtNineClubs]
+  playTournament 100
+  --playOneGameStep4 [ExtReverse8,ExtThree3s,ExtNineClubs]
   --playOneGame
   --playOneGameWithHistory
   putStr ("\n==========")
